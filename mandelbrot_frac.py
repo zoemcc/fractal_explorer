@@ -5,6 +5,7 @@ import numpy as np
 # Imports for visualization
 import PIL.Image
 from cStringIO import StringIO
+import svgwrite
 from IPython.display import clear_output, Image, display
 import scipy.ndimage as nd
 from skimage import measure
@@ -12,6 +13,7 @@ import scipy
 from IPython import embed
 import matplotlib.pyplot as plt
 from numpy.linalg import norm
+import mcubes
 
 MAX_ITERS = 200
 
@@ -55,6 +57,48 @@ def add_pendant(img_int_ext, location, radius, ext_radius):
             if dist < radius + ext_radius and dist > radius - ext_radius:
                 new_img_ext[i, j] = -1
     return new_img_ext
+
+def gen_tsdf(int_ext_map, max_dist):
+    tsdf = np.copy(int_ext_map)
+    for i in xrange(tsdf.shape[0]):
+        print 'new i!: %d' % i
+        for j in xrange(tsdf.shape[1]):
+            i_primes = [i + k for k in range(-max_dist, max_dist + 1)]
+            j_primes = [j + k for k in range(-max_dist, max_dist + 1)]
+            i_primes = [i_prime for i_prime in i_primes if i_prime < tsdf.shape[0] and i_prime > 0]
+            j_primes = [j_prime for j_prime in j_primes if j_prime < tsdf.shape[1] and j_prime > 0]
+            min_dist = max_dist
+            current_sign = int_ext_map[i, j]
+            for i_prime in i_primes:
+                for j_prime in j_primes:
+                    if np.abs(int_ext_map[i_prime, j_prime] - current_sign) > 0.01: # opposite sign
+                        dist = norm(np.array((i, j)) - np.array((i_prime, j_prime)))
+                        if dist < min_dist:
+                            min_dist = dist
+            tsdf[i, j] = current_sign * min_dist
+
+    return tsdf
+
+def gen_int_ext_3d_map_from_tsdf(tsdf, max_dist):
+    interior_exterior_3d_map = np.zeros((tsdf.shape[0], tsdf.shape[1], 2 * max_dist + 3))
+    for i in xrange(tsdf.shape[0]):
+        print 'new i!: %d' % i
+        for j in xrange(tsdf.shape[1]):
+            for k in xrange(2 * max_dist + 3):
+                if tsdf[i, j] < 0: # we only care about the interior
+                    height = np.abs(k - max_dist - 1)
+                    quadform = tsdf[i, j] ** 2 * -3.0 / 20 + tsdf[i, j] * -53.0 / 20 - 1.0
+                    #quadform = height ** 2 * -3.0 / 20 + height * 53.0 / 20 - 1.0
+                    if height <= quadform :
+                        interior_exterior_3d_map[i, j, k] = -1.0
+                    else: 
+                        interior_exterior_3d_map[i, j, k] = 1.0
+                else:
+                    interior_exterior_3d_map[i, j, k] = 1.0
+
+
+
+    return interior_exterior_3d_map
 
             
 
@@ -174,17 +218,16 @@ def main():
 
     #embed()
 
-    fig, ax = plt.subplots()
+    #fig, ax = plt.subplots()
     #ax.imshow(img_int_ext, interpolation='nearest', cmap=plt.cm.gray)
     #for n, contour in enumerate(contours):
         #ax.plot(contour[:, 1], contour[:, 0], linewidth=2)
-    ax.plot(bigcontour[:, 1], bigcontour[:, 0], linewidth=2)
+    #ax.plot(bigcontour[:, 1], bigcontour[:, 0], linewidth=2)
 
-    ax.axis('image')
-    ax.set_xticks([])
-    ax.set_yticks([])
+    #ax.axis('image')
+    #ax.set_xticks([])
+    #ax.set_yticks([])
 
-    import svgwrite
 
     dwg = svgwrite.Drawing('mandelbrot.svg', profile='tiny')
     for j in [-1, -2]:
@@ -197,13 +240,45 @@ def main():
     dwg.save()
     #plt.show()
 
-    error = 100 * np.abs(mus_evaled - ns_evaled)
+    #error = 100 * np.abs(mus_evaled - ns_evaled)
     #print error.shape
-    error = error.reshape(list(error.shape)+[1])
+    #error = error.reshape(list(error.shape)+[1])
     #print error.shape
-    error_img = np.concatenate([error, error, error], 2)
-    error_img = np.uint8(np.clip(error_img, 0, 255))
-    scipy.misc.imsave('mandelbrot_errors.png', error_img)
+    #error_img = np.concatenate([error, error, error], 2)
+    #error_img = np.uint8(np.clip(error_img, 0, 255))
+    #scipy.misc.imsave('mandelbrot_errors.png', error_img)
+
+    # 3d mandelbrot!
+
+    max_dist = 10
+    #tsdf = gen_tsdf(img_int_ext_pendant_noend_bigmiddle, max_dist)
+    tsdf = np.load("tsdf_10.npy")
+    #np.save("tsdf_10", tsdf)
+    #plt.imshow(tsdf)
+    #plt.show()
+
+    # a = -3 / 20 
+    # b = 53 / 20 
+    # c = -1
+    # for 10.5 at 10, 8.5 at 5, and 1.5 at 1
+    # with a * x**2 + b * x + c formula for height
+
+    int_ext_3d_map = gen_int_ext_3d_map_from_tsdf(tsdf, max_dist)
+    #embed()
+
+    vertices, triangles = mcubes.marching_cubes(int_ext_3d_map, 0)
+    mcubes.export_mesh(vertices, triangles, "mandelbrot_smoothed.dae", "Mandelbrot_pendant")
+    #embed()
+
+    from mayavi import mlab
+    mlab.triangular_mesh(
+        vertices[:, 0], vertices[:, 1], vertices[:, 2],
+        triangles)
+    mlab.show()
+
+
+
+
 
 
 if __name__ == '__main__':
